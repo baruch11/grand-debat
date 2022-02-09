@@ -15,7 +15,7 @@ def get_themes(data_theme_response_dict, selected_question, n_topics=20, max_ite
     tf_vectorizer = CountVectorizer(min_df=5, max_df=0.9)
     dtm_tf = tf_vectorizer.fit_transform(data_theme_response_dict[selected_question])
 
-    lda_tf = LatentDirichletAllocation(n_topics=n_topics, random_state=0, n_jobs=-1, verbose=1, max_iter=max_iter, perp_tol=0.5, evaluate_every=4)
+    lda_tf = LatentDirichletAllocation(n_components=n_topics, random_state=0, n_jobs=-1, verbose=1, max_iter=max_iter, perp_tol=0.5, evaluate_every=4)
     lda_tf.fit(dtm_tf)
 
     pyLDAVIS_tf = pyLDAvis.sklearn.prepare(lda_tf, dtm_tf, tf_vectorizer)
