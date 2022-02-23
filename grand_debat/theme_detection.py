@@ -5,6 +5,9 @@ from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.feature_extraction.text import CountVectorizer
 from tqdm import tqdm
 import warnings
+from gensim.corpora import Dictionary
+from gensim.models.coherencemodel import CoherenceModel
+
 warnings.simplefilter('ignore')
 pyLDAvis.enable_notebook()
 
@@ -71,3 +74,58 @@ def lemmatize_answers(answs, nlp):
             answ_lems.append(" ".join([w.lemma_ for w in doc if w.pos_ not in
                                        disable_pos]))
     return answ_lems
+
+
+def compute_coherence_vs_ntopics(responses, num_topics=[], stop_words=None,
+                                 lambda_coh=0):
+    """Try many numbers of topics and return lda coherence scores
+    Args:
+        responses (list of str): vector of tokens separated by space
+          representing one reponse
+        num_topics: list of int, vector of topics numbers
+    Returns:
+        v_coh: list of int, coherence vector
+        l_topics: list of topics, each topics is a list of token
+    """
+    tf_vectorizer = CountVectorizer(min_df=5, max_df=0.9,
+                                    stop_words=stop_words)
+    dtm_tf = tf_vectorizer.fit_transform(responses)
+
+    # compute topics for different n_topics
+    l_topics = []
+    for n_topics in num_topics:
+        print("compute lda for {} topics".format(n_topics))
+        lda = LatentDirichletAllocation(n_components=n_topics, random_state=0,
+                                        n_jobs=2, verbose=0, max_iter=100,
+                                        perp_tol=0.5, evaluate_every=4)
+        lda.fit(dtm_tf)
+        # retrieve topics
+        topics = []
+        for ii in range(lda.components_.shape[0]):
+            topic = get_topic_by_relevance(
+                tf_vectorizer, lda, lambd=lambda_coh, n_topic=ii).tolist()
+            topics.append(topic)
+
+        l_topics.append(topics)
+
+    # compute c_v coherence for each lda
+    corpus = [doc.split(' ') for doc in responses]
+    dictionary = Dictionary(corpus)
+
+    v_coh = []
+    for topics in l_topics:
+        cm = CoherenceModel(topics=topics, texts=corpus, dictionary=dictionary,
+                            coherence='c_v')
+        coherence = cm.get_coherence()  # get coherence value
+        v_coh.append(coherence)
+
+    # retrieve last idx before decrease
+    vdec = np.nonzero(np.diff(v_coh) < 0)[0]
+    if len(vdec) < 1:
+        best_n = num_topics[len(v_coh)-1]
+    else:
+        best_n = num_topics[vdec[0]]
+
+    print("Best coherence achieved for n_topics = {}".format(best_n))
+
+    return v_coh, l_topics, best_n
