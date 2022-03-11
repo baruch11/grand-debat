@@ -1,23 +1,43 @@
-import json
+import ijson
+from tqdm import tqdm
 
 
-def load_data(path):
+def load_answers(filepath, selected_question):
+    """Load answers from json file filepath.
+
+    Args:
+        filepath (str): input json file
+        selected_question (str) : id of the question
+    Returns:
+        list of str: the answers
     """
-    Opens the json file at path location (from current dir)
+    with open(filepath, "r") as f:
+        entries = ijson.items(f, 'item')
 
-    Parameters
-    ----------
-    path: str
-        Path to json file
+        ret = []
+        for entry in tqdm(entries):
+            for quest in entry["responses"]:
+                if (quest.get('questionId') == selected_question and
+                        quest.get('value') is not None):
+                    ret.append(quest.get('value'))
+    return ret
 
-    Returns
-    -------
-    json_data: {}
-        Data
+
+def display_questions_from_json(filepath):
+    """Display ids and questions from json file.
+
+    Args:
+        filepath (str): path of the json
     """
-    with open(path, 'r') as f:
-        json_data = json.load(f)
-    return json_data
+    f = open(filepath, "r")
+    objects = ijson.items(f, 'item')
+
+    for answ in objects:
+        questions_id = [r['questionId'] for r in answ['responses']]
+        questions_title = [r['questionTitle'] for r in answ['responses']]
+        break  # only one entry in the json is needed
+    for idq, title in zip(questions_id, questions_title):
+        print("Qestion id : {}\n{}\n".format(idq, title))
 
 
 def get_path(themes, selected_theme):
@@ -41,29 +61,3 @@ def get_path(themes, selected_theme):
         if int(theme[0]) == selected_theme:
             path = './data/' + theme[2:] + '.json'
     return path
-
-
-def load_question(questions_id, data_theme_json, question):
-    """
-    Loads the data associated to the selected question in a dict
-
-    Parameters
-    ----------
-    question_id: str
-        Question ID
-    data_theme_json: {}
-        Data bearing all questions
-    question: str
-        Question to filter
-
-    Returns
-    -------
-    data_theme_response_dict: {}
-        Only relevant responses
-    """
-    data_theme_response = [(r['questionId'], r['formattedValue']) for x in data_theme_json for r in x['responses']]
-    data_theme_response_dict = {x: [] for x in questions_id}
-    for x in data_theme_response:
-        if x[1]:
-            data_theme_response_dict[x[0]].extend([x[1]])
-    return data_theme_response_dict
