@@ -3,62 +3,52 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import networkx as nx
+from tqdm import tqdm
+from grand_debat.theme_detection import GDebatTopicDetection
 
 
-def prepare_data(data_theme_response_dict, selected_question):
-    """
-    Separate data into clean sentences
-
-    Parameters
-    ----------
-    data_theme_response_dict: {}
-        Responses associated to a question
-    selected_question: str
-        Question to study
-
-    Returns
-    -------
-    clean_sentences: [str]
-        Cleaned sentences
-    """
-    # split the the text in the articles into sentences
-    sentences = []
-    for s in data_theme_response_dict[selected_question]:
-        sentences.append(sent_tokenize(s))
-
-    # flatten the list
-    sentences = [y for x in sentences for y in x]
-
-    # remove punctuations, numbers and special characters
-    clean_sentences = pd.Series(sentences).str.replace(" ", " ")
-
-    # make alphabets lowercase
-    clean_sentences = [s.lower() for s in clean_sentences]
-
-    return clean_sentences
-
-
-def create_titles(clean_sentences, tf_vectorizer, lda_tf):
+def create_titles(answers, topic_detector):
     """
     Applies clustering algorithm in order to get most characteristic themes
 
     Parameters
     ----------
-    clean_sentences: [str]
-        Answers to a question
-    tf_vectorizer: sklearn object
-        Vectorizer
-    lda_tf: sklearn object
-        LDA fitted
+    answers (list of str): answers to the question
+    topic_detector (GDataTopicDetection): fitted topic detector
     """
-    title_sentences = [x for x in clean_sentences if len(x) < 250]
-    title_sentences = [x for x in title_sentences if "\n" not in x]
-    sentence_tf = tf_vectorizer.transform(title_sentences)
-    sentences_mixture_topics = lda_tf.transform(sentence_tf)
-    titles = np.argmax(sentences_mixture_topics, axis=0)
-    for t in [title_sentences[x] for x in titles]:
-        print(t, '\n')
-    return sentences_mixture_topics, title_sentences, titles
+    # sentence segmentation
+    nlp = topic_detector.data_preparation.nlp
+    answ_sents = []
+    print("Sentence segmentation")
+    for doc in tqdm(nlp.pipe(answers, n_process=1), total=len(answers)):
+        for sent in doc.sents:
+            answ_sents.append(sent.text)
+    answ_sents = [sent for sent in answ_sents
+                  if len(sent) < 200 and len(sent) > 100]
+
+    # apply topic detection on the sentences
+    data_prep = topic_detector.data_preparation
+    print("Data preparation")
+    sents_lems = data_prep.tokenize(answ_sents)
+    print("LDA transformation")
+    topic_proba = topic_detector.tf_lda.transform(
+        data_prep.tf_bow.transform(sents_lems))
+
+    topics = topic_detector.get_topics_by_relevance(lambd=1)
+
+    def get_title(itop):
+        """  """
+        df = pd.DataFrame(
+            columns=["topic proba", "nterms"],
+            data=list(zip(topic_proba[:, itop],
+                          [len(set(lem).intersection(set(topics[itop]))) for
+                           lem in sents_lems])),
+                    )
+        df_sort = df[df["topic proba"] > 0.9].sort_values(by="nterms",
+                                                          ascending=False)
+        return answers[df_sort.index[0]]
+
+    return [get_title(itop) for itop, _ in enumerate(topics)]
 
 
 def apply_page_rank_algorithm(clean_sentences, sentences_paragraph, word_embeddings, sn):

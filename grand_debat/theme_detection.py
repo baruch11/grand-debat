@@ -7,117 +7,152 @@ from tqdm import tqdm
 import warnings
 from gensim.corpora import Dictionary
 from gensim.models.coherencemodel import CoherenceModel
+import spacy
 
 warnings.simplefilter('ignore')
 pyLDAvis.enable_notebook()
 
 
-def get_themes(responses, n_topics=20, max_iter=100, stop_words=None):
+class GDebatDataPreparation:
+    """data preparation for theme detection
+
+    The role of this class is to provide data as inputs of the theme detection
+    algorithm
+
+    parameters :
+        answers (list of str): corpus of answers used
+        for countvectorizer fitting
+
     """
-    Get the main themes of selected question and save them in the following
-    file: pyLDAVIS_tf.html
+    def __init__(self, answers, n_process=1):
+        print("load spacy pipeline")
+        self.nlp = spacy.load("fr_core_news_md", exclude=["ner"])
 
-    Args:
-        responses: list of documents (strings)
-    """
-    tf_vectorizer = CountVectorizer(min_df=5, max_df=0.9,
-                                    stop_words=stop_words)
-    dtm_tf = tf_vectorizer.fit_transform(responses)
+        # tokenization
+        print("tokenizing datas")
+        self.answ_lems = self.tokenize(answers, n_process)
 
-    lda = LatentDirichletAllocation(n_components=n_topics, random_state=0,
-                                    n_jobs=-1, verbose=1, max_iter=max_iter,
-                                    perp_tol=0.5, evaluate_every=4)
-    lda.fit(dtm_tf)
+        # fit countVecorizer
+        def dummy(doc):
+            return doc
+        self.tf_bow = CountVectorizer(
+            min_df=0, max_df=0.9, tokenizer=dummy, preprocessor=dummy,
+            stop_words=self.nlp.Defaults.stop_words)
+        print("fitting countvectorizer")
+        self.answ_bow = self.tf_bow.fit_transform(self.answ_lems)
+        print("data preparation done")
 
-    pyLDAVIS_tf = pyLDAvis.sklearn.prepare(lda, dtm_tf, tf_vectorizer)
-    pyLDAvis.save_html(pyLDAVIS_tf, 'pyLDAVIS_tf.html')
+    def tokenize(self, answs, n_process=1):
+        """Lemmatize answers.
+        and keep only nouns and adj
 
-    return tf_vectorizer, lda
+        Args:
+            answs (list of str): strings representing answers
+        Returns:
+            list of list of words
+        """
+        disable_pos = ['PUNCT', 'AUX', 'DET', 'ADP', 'NUM', 'CCONJ', 'PRON',
+                       'ADV', 'VERB', 'SPACE']
+        with self.nlp.select_pipes(disable=["parser"]):
+            answ_lems = [
+                [w.lemma_ for w in doc if w.pos_ not in disable_pos]
+                for doc in tqdm(self.nlp.pipe(answs, n_process=n_process),
+                                total=len(answs))]
 
+        return answ_lems
 
-def get_topic_by_relevance(vectorizer, lda, lambd, n_topic, n_top=10):
-    """Get the topics from a sklearn countvectorizer and lda sorted by relevance
-    see def of relevance in pyLDAvis article
-    https://nlp.stanford.edu/events/illvi2014/papers/sievert-illvi2014.pdf
+    def get_internal_lemmatized_datas(self):
+        return self.answ_lems
 
-    Args:
-        vectorizer: sklearn CountVectorizer
-        lda: sklearn LatentDirichletAllocation
-        lambd: float, lambda in pyLDAvis paper
-        n_topic: int, indice of the topic
-        n_top: nomber of top words for topic representation
-    Returns:
-        list of strings, topic words set representation
-    """
-    feature_names = vectorizer.get_feature_names_out()
-    pw = lda.components_.sum(axis=0) / lda.components_.sum()
-    pw_t = lda.components_ / lda.components_.sum(axis=1)[:, np.newaxis]
-    relevance = lambd * pw_t + (1 - lambd) * pw_t / pw
-    return feature_names[np.argsort(relevance[n_topic, :])[:-n_top:-1]]
+    def get_internal_bow_datas(self):
+        return self.answ_bow
 
-
-def lemmatize_answers(answs, nlp):
-    """Lemmatize answers
-    and keep only nouns and adj
-
-    Args:
-        answs: list of strings representing answers
-        nlp: spacy pipeline
-    Returns:
-        new clean list of strings
-    """
-    answ_lems = []
-    disable_pos = ['PUNCT', 'AUX', 'DET', 'ADP', 'NUM', 'CCONJ', 'PRON', 'ADV',
-                   'VERB']
-    with nlp.select_pipes(disable=["ner", "parser"]):
-        for doc in tqdm(nlp.pipe(answs, n_process=1), total=len(answs)):
-            answ_lems.append(" ".join([w.lemma_ for w in doc if w.pos_ not in
-                                       disable_pos]))
-    return answ_lems
+    def prepare_data(self, answers):
+        """Prepare data for theme detection.
+        Args:
+            answers (list of str): strings representings answers
+        Returns (spase matrix):
+            bag of words after lemmatization
+        """
+        return self.tf_bow.transform(self.tokenize(answers))
 
 
-def compute_coherence_vs_ntopics(responses, num_topics=[], stop_words=None,
+class GDebatTopicDetection:
+    def __init__(self, data_preparation, n_topics=20, max_iter=100, verbose=0):
+        self.data_preparation = data_preparation
+        self.tf_lda = LatentDirichletAllocation(
+            n_components=n_topics, random_state=0, n_jobs=-1, verbose=verbose,
+            max_iter=max_iter, perp_tol=0.5, evaluate_every=4)
+
+    def compute_topic_detection(self, data_bow=None, data_lems=None,
+                                LDAVis=False):
+        lda_input = data_bow
+        if data_lems:
+            lda_input = self.data_preparation.tf_bow.transform(data_lems)
+        self.tf_lda.fit(lda_input)
+
+        if LDAVis:
+            pyLDAVIS_tf = pyLDAvis.sklearn.prepare(
+                self.tf_lda, lda_input, self.data_preparation.tf_bow)
+            pyLDAvis.save_html(pyLDAVIS_tf, 'pyLDAVIS_tf.html')
+            print("LDA visualization in pyLDAVIS_tf.html")
+
+    def get_topics_by_relevance(self, lambd, n_top=10):
+        """Get the topics from a sklearn countvectorizer and lda sorted by relevance
+        see def of relevance in pyLDAvis article
+        https://nlp.stanford.edu/events/illvi2014/papers/sievert-illvi2014.pdf
+
+        Args:
+            lambd: float, lambda in pyLDAvis paper
+            n_top: nomber of top words for topic representation
+        Returns:
+            list of strings, topic words set representation
+        """
+        lda_components = self.tf_lda.components_
+
+        pw = lda_components.sum(axis=0) / lda_components.sum()
+        pw_t = lda_components / lda_components.sum(axis=1)[:, np.newaxis]
+        relevance = lambd * pw_t + (1 - lambd) * pw_t / pw
+
+        feature_names = self.data_preparation.tf_bow.get_feature_names_out()
+        ret = []
+        for n_topic in range(lda_components.shape[0]):
+            ret.append(feature_names[np.argsort(
+                relevance[n_topic, :])[:-n_top:-1]].tolist())
+        return ret
+
+
+def compute_coherence_vs_ntopics(responses, data_prep, num_topics=[],
                                  lambda_coh=0):
     """Try many numbers of topics and return lda coherence scores
     Args:
-        responses (list of str): vector of tokens separated by space
-          representing one reponse
+        responses (list of list of str): matrix of lemmatized tokens
+        data_prep (GDebatDataPreparation): data preparation pipeline
         num_topics: list of int, vector of topics numbers
     Returns:
         v_coh: list of int, coherence vector
         l_topics: list of topics, each topics is a list of token
     """
-    tf_vectorizer = CountVectorizer(min_df=5, max_df=0.9,
-                                    stop_words=stop_words)
-    dtm_tf = tf_vectorizer.fit_transform(responses)
+
+    # compute c_v coherence for each lda
+    dictionary = Dictionary(responses)
 
     # compute topics for different n_topics
-    l_topics = []
+    l_topics, v_coh = [], []
     for n_topics in num_topics:
         print("compute lda for {} topics".format(n_topics))
-        lda = LatentDirichletAllocation(n_components=n_topics, random_state=0,
-                                        n_jobs=2, verbose=0, max_iter=100,
-                                        perp_tol=0.5, evaluate_every=4)
-        lda.fit(dtm_tf)
+        topd = GDebatTopicDetection(data_prep, n_topics=n_topics)
+        topd.compute_topic_detection(data_lems=responses)
         # retrieve topics
-        topics = []
-        for ii in range(lda.components_.shape[0]):
-            topic = get_topic_by_relevance(
-                tf_vectorizer, lda, lambd=lambda_coh, n_topic=ii).tolist()
-            topics.append(topic)
+        topics = topd.get_topics_by_relevance(lambd=lambda_coh)
 
         l_topics.append(topics)
 
-    # compute c_v coherence for each lda
-    corpus = [doc.split(' ') for doc in responses]
-    dictionary = Dictionary(corpus)
-
-    v_coh = []
-    for topics in l_topics:
-        cm = CoherenceModel(topics=topics, texts=corpus, dictionary=dictionary,
-                            coherence='c_v')
+        cm = CoherenceModel(topics=topics, texts=responses,
+                            dictionary=dictionary, coherence='c_v')
         coherence = cm.get_coherence()  # get coherence value
         v_coh.append(coherence)
+        print("Lda done, coherence {:.3f}".format(coherence))
 
     # retrieve last idx before decrease
     vdec = np.nonzero(np.diff(v_coh) < 0)[0]
