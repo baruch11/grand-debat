@@ -46,7 +46,7 @@ def create_titles(answers, topic_detector):
                     )
         df_sort = df[df["topic proba"] > 0.9].sort_values(by="nterms",
                                                           ascending=False)
-        return answers[df_sort.index[0]]
+        return answ_sents[df_sort.index[0]]
 
     return [get_title(itop) for itop, _ in enumerate(topics)]
 
