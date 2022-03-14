@@ -36,7 +36,7 @@ class GDebatDataPreparation:
         def dummy(doc):
             return doc
         self.tf_bow = CountVectorizer(
-            min_df=0, max_df=0.9, tokenizer=dummy, preprocessor=dummy,
+            min_df=5, max_df=0.9, tokenizer=dummy, preprocessor=dummy,
             stop_words=self.nlp.Defaults.stop_words)
         print("fitting countvectorizer")
         self.answ_bow = self.tf_bow.fit_transform(self.answ_lems)
@@ -51,11 +51,10 @@ class GDebatDataPreparation:
         Returns:
             list of list of words
         """
-        disable_pos = ['PUNCT', 'AUX', 'DET', 'ADP', 'NUM', 'CCONJ', 'PRON',
-                       'ADV', 'VERB', 'SPACE']
+        enable_pos = ["NOUN", "ADJ"]
         with self.nlp.select_pipes(disable=["parser"]):
             answ_lems = [
-                [w.lemma_ for w in doc if w.pos_ not in disable_pos]
+                [w.lemma_ for w in doc if w.pos_ in enable_pos]
                 for doc in tqdm(self.nlp.pipe(answs, n_process=n_process),
                                 total=len(answs))]
 
