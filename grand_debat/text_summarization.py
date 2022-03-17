@@ -1,54 +1,74 @@
-from nltk.tokenize import sent_tokenize
 import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import networkx as nx
 from tqdm import tqdm
-from grand_debat.theme_detection import GDebatTopicDetection
+
+TITLE_LEN_MIN = 100
+TITLE_LEN_MAX = 200
 
 
-def create_titles(answers, topic_detector):
+class GDebatSummerization:
+    """Summerization algorithms.
+
+    Unlike the LDA these algorithm work on sentences.
+
+    parameters:
+        answers (list of str): answers to the question
+        topic_detector (GDataTopicDetection): fitted topic detector
     """
-    Applies clustering algorithm in order to get most characteristic themes
 
-    Parameters
-    ----------
-    answers (list of str): answers to the question
-    topic_detector (GDataTopicDetection): fitted topic detector
-    """
-    # sentence segmentation
-    nlp = topic_detector.data_preparation.nlp
-    answ_sents = []
-    print("Sentence segmentation")
-    for doc in tqdm(nlp.pipe(answers, n_process=1), total=len(answers)):
-        for sent in doc.sents:
-            answ_sents.append(sent.text)
-    answ_sents = [sent for sent in answ_sents
-                  if len(sent) < 200 and len(sent) > 100]
+    def __init__(self, answers, topic_detector):
+        self.topic_detector = topic_detector
+        nlp = topic_detector.data_preparation.nlp
 
-    # apply topic detection on the sentences
-    data_prep = topic_detector.data_preparation
-    print("Data preparation")
-    sents_lems = data_prep.tokenize(answ_sents)
-    print("LDA transformation")
-    topic_proba = topic_detector.tf_lda.transform(
-        data_prep.tf_bow.transform(sents_lems))
+        # sentence segmentation
+        print("Sentence segmentation")
+        self.answ_sents = []
+        for doc in tqdm(nlp.pipe(answers, n_process=1), total=len(answers)):
+            for sent in doc.sents:
+                self.answ_sents.append(sent.text)
 
-    topics = topic_detector.get_topics_by_relevance(lambd=1)
+        self.answ_sents = [sent for sent in self.answ_sents
+                           if len(sent) < TITLE_LEN_MAX and
+                           len(sent) > TITLE_LEN_MIN]
 
-    def get_title(itop):
-        """  """
-        df = pd.DataFrame(
-            columns=["topic proba", "nterms"],
-            data=list(zip(topic_proba[:, itop],
-                          [len(set(lem).intersection(set(topics[itop]))) for
-                           lem in sents_lems])),
-                    )
-        df_sort = df[df["topic proba"] > 0.9].sort_values(by="nterms",
-                                                          ascending=False)
-        return answ_sents[df_sort.index[0]]
+        # apply topic detection on the sentences
+        data_prep = self.topic_detector.data_preparation
+        print("Tokenization")
+        self.sents_lems = data_prep.tokenize(self.answ_sents)
 
-    return [get_title(itop) for itop, _ in enumerate(topics)]
+    def create_titles(self):
+        """
+        Applies clustering algorithm in order to get most characteristic themes
+        """
+
+        # title size between MIN and MAX
+        sents = [sent for sent in self.answ_sents if len(sent) < TITLE_LEN_MAX
+                 and len(sent) > TITLE_LEN_MIN]
+        slems = [lems for sent, lems in zip(self.answ_sents, self.sents_lems)
+                 if len(sent) < TITLE_LEN_MAX and len(sent) > TITLE_LEN_MIN]
+
+        # LDA
+        print("LDA transformation")
+        data_prep = self.topic_detector.data_preparation
+        topic_proba = self.topic_detector.tf_lda.transform(
+            data_prep.tf_bow.transform(slems))
+
+        topics = self.topic_detector.get_topics_by_relevance(lambd=1)
+
+        def get_title(itop):
+            df = pd.DataFrame(
+                columns=["topic proba", "nterms"],
+                data=list(zip(topic_proba[:, itop],
+                              [len(set(lem).intersection(set(topics[itop])))
+                               for lem in slems])),
+                        )
+            df_sort = df[df["topic proba"] > 0.9].sort_values(by="nterms",
+                                                              ascending=False)
+            return sents[df_sort.index[0]]
+
+        return [get_title(itop) for itop, _ in enumerate(topics)]
 
 
 def apply_page_rank_algorithm(clean_sentences, sentences_paragraph, word_embeddings, sn):
