@@ -1,3 +1,4 @@
+"""Loading datasets functions"""
 import ijson
 from tqdm import tqdm
 
@@ -23,21 +24,21 @@ def load_answers(filepath, selected_question):
     return ret
 
 
-def display_questions_from_json(filepath):
-    """Display ids and questions from json file.
+def get_questions_from_json(filepath):
+    """Get ids and questions from json file.
 
     Args:
         filepath (str): path of the json
+    Returns:
+        dict, key = id, values = questions
     """
-    f = open(filepath, "r")
-    objects = ijson.items(f, 'item')
+    with open(filepath, "r", encoding='utf8') as fjson:
+        objects = ijson.items(fjson, 'item')
 
-    for answ in objects:
-        questions_id = [r['questionId'] for r in answ['responses']]
-        questions_title = [r['questionTitle'] for r in answ['responses']]
-        break  # only one entry in the json is needed
-    for idq, title in zip(questions_id, questions_title):
-        print("Qestion id : {}\n{}\n".format(idq, title))
+        for answ in objects:
+            ret = {r['questionId']:r['questionTitle'] for r in answ['responses']}
+            break  # only one entry in the json is needed
+        return ret
 
 
 def get_path(themes, selected_theme):

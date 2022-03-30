@@ -1,15 +1,16 @@
+"""Topic detection"""
+
 import pyLDAvis
 import pyLDAvis.sklearn
 import numpy as np
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.feature_extraction.text import CountVectorizer
 from tqdm import tqdm
-import warnings
 from gensim.corpora import Dictionary
 from gensim.models.coherencemodel import CoherenceModel
 import spacy
 
-warnings.simplefilter('ignore')
+
 pyLDAvis.enable_notebook()
 
 
@@ -22,22 +23,26 @@ class GDebatDataPreparation:
     parameters :
         answers (list of str): corpus of answers used
         for countvectorizer fitting
-
+        stopsentence (str): if not None, stopsentence are added to the default list
+           after tokenization. (Try to put the question for e.g.)
     """
-    def __init__(self, answers, n_process=1):
+    def __init__(self, answers, n_process=1, stopsentence=""):
         print("load spacy pipeline")
         self.nlp = spacy.load("fr_core_news_md", exclude=["ner"])
 
         # tokenization
         print("tokenizing datas")
         self.answ_lems = self.tokenize(answers, n_process)
+        add_stopwords = set(self.tokenize([stopsentence])[0])
+        if len(add_stopwords)>0:
+            print("Additional stopwords ", add_stopwords)
 
         # fit countVecorizer
         def dummy(doc):
             return doc
         self.tf_bow = CountVectorizer(
             min_df=5, max_df=0.9, tokenizer=dummy, preprocessor=dummy,
-            stop_words=self.nlp.Defaults.stop_words)
+            stop_words=self.nlp.Defaults.stop_words.union(add_stopwords))
         print("fitting countvectorizer")
         self.answ_bow = self.tf_bow.fit_transform(self.answ_lems)
         print("data preparation done")
