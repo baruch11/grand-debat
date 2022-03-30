@@ -1,5 +1,6 @@
 """Topic detection"""
 
+import warnings
 import pyLDAvis
 import pyLDAvis.sklearn
 import numpy as np
@@ -12,7 +13,7 @@ import spacy
 
 
 pyLDAvis.enable_notebook()
-
+warnings.simplefilter('ignore')
 
 class GDebatDataPreparation:
     """data preparation for theme detection
