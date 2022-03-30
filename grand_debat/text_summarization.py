@@ -1,17 +1,24 @@
+""" text summarization """
 import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import networkx as nx
 from tqdm import tqdm
+from gensim.models.doc2vec import Doc2Vec, TaggedDocument
 
+
+# create_title
 TITLE_LEN_MIN = 100
 TITLE_LEN_MAX = 200
-
+# sentence selection for each topic
+PURE_TOPIC_THRESH = 0.7
+# pagerank
+MAX_SENTENCES_PAGERANK = 3000
 
 class GDebatSummerization:
-    """Summerization algorithms.
+    """Summarization algorithms.
 
-    Unlike the LDA these algorithm work on sentences.
+    These algorithm work on sentences.
 
     parameters:
         answers (list of str): answers to the question
@@ -24,72 +31,76 @@ class GDebatSummerization:
 
         # sentence segmentation
         print("Sentence segmentation")
-        self.answ_sents = []
-        for doc in tqdm(nlp.pipe(answers, n_process=1), total=len(answers)):
+        answ_sents = []
+        for idoc, doc in tqdm(enumerate(nlp.pipe(answers, n_process=1)),
+                              total=len(answers)):
             for sent in doc.sents:
-                self.answ_sents.append(sent.text)
+                answ_sents.append((idoc, sent.text))
 
-        self.answ_sents = [sent for sent in self.answ_sents
-                           if len(sent) < TITLE_LEN_MAX and
-                           len(sent) > TITLE_LEN_MIN]
+        self.answ_sents = [sent for idoc, sent in answ_sents]
 
         # apply topic detection on the sentences
         data_prep = self.topic_detector.data_preparation
-        print("Tokenization")
+        print("Topic detection")
         self.sents_lems = data_prep.tokenize(self.answ_sents)
+        self.topic_proba = topic_detector.tf_lda.transform(
+            data_prep.tf_bow.transform(self.sents_lems))
+
 
     def create_titles(self):
+        """For each topic, choose a chracteristic short sentence.
         """
-        Applies clustering algorithm in order to get most characteristic themes
-        """
-
-        # title size between MIN and MAX
-        sents = [sent for sent in self.answ_sents if len(sent) < TITLE_LEN_MAX
-                 and len(sent) > TITLE_LEN_MIN]
-        slems = [lems for sent, lems in zip(self.answ_sents, self.sents_lems)
-                 if len(sent) < TITLE_LEN_MAX and len(sent) > TITLE_LEN_MIN]
-
-        # LDA
-        print("LDA transformation")
-        data_prep = self.topic_detector.data_preparation
-        topic_proba = self.topic_detector.tf_lda.transform(
-            data_prep.tf_bow.transform(slems))
 
         topics = self.topic_detector.get_topics_by_relevance(lambd=1)
 
         def get_title(itop):
-            df = pd.DataFrame(
-                columns=["topic proba", "nterms"],
-                data=list(zip(topic_proba[:, itop],
-                              [len(set(lem).intersection(set(topics[itop])))
-                               for lem in slems])),
-                        )
-            df_sort = df[df["topic proba"] > 0.9].sort_values(by="nterms",
-                                                              ascending=False)
-            return sents[df_sort.index[0]]
+            tdf = pd.DataFrame(
+                columns=["topic proba", "nterms", "len"],
+                data=list(zip(
+                    self.topic_proba[:, itop],
+                    [len(set(lem).intersection(set(topics[itop])))
+                     for lem in self.sents_lems],
+                    [len(ans) for ans in self.answ_sents]
+                )))
+            df_sort = tdf[(tdf["topic proba"] > 0.9) &
+                          (tdf["len"] < TITLE_LEN_MAX) &
+                          (tdf["len"] > TITLE_LEN_MIN)
+                         ].sort_values(by="nterms", ascending=False)
+            return self.answ_sents[df_sort.index[0]]
 
         return [get_title(itop) for itop, _ in enumerate(topics)]
 
 
-def apply_page_rank_algorithm(clean_sentences, sentences_paragraph, word_embeddings, sn):
-    """
-    Apply the page rank algorithm over the sentence graph to get the
-    text summarization
-    """
-    sentences_summary = [x for i, x in enumerate(clean_sentences) if sentences_paragraph.get(i, -1)==1]
-    sentences_summary_emb = []
-    for i in sentences_summary:
-        if len(i) != 0:
-            v = sum([word_embeddings.get(w, np.zeros((100,))) for w in i.split()])/(len(i.split())+0.001)
-        else:
-            v = np.zeros((100,))
-        sentences_summary_emb.append(v)
-    sim_mat = cosine_similarity(sentences_summary_emb)
-    nx_graph = nx.from_numpy_array(sim_mat)
-    try:
+    def group_sentences_by_topics(self):
+        """For each topic, get the most representative sentences.
+
+        Returns:
+            pd.Series(list of int): indices of the sentences sorted by topic probability
+        """
+        maxtopics = pd.DataFrame({
+            "proba_max": self.topic_proba.max(axis=1),
+            "topic": self.topic_proba.argmax(axis=1)}).sort_values(
+                by="proba_max", ascending=False)
+        return maxtopics[maxtopics.proba_max > PURE_TOPIC_THRESH].reset_index().groupby(
+            "topic")["index"].apply(list)
+
+
+    def get_topic_summary(self, lidx, nb_sentences):
+        """Return topic summary."""
+
+        # doc2vec
+        print("Doc2vec embedding")
+        tagged_data = [TaggedDocument(d, [i])
+                       for i, d in enumerate(self.sents_lems)]
+        d2v_model = Doc2Vec(tagged_data, vector_size=50, epochs=40,
+                            workers=3)
+
+        topic_lems = np.array(self.sents_lems)[lidx]
+
+        sents_emb = [d2v_model.infer_vector(lems) for lems in tqdm(topic_lems)]
+        sim_mat = cosine_similarity(sents_emb[:MAX_SENTENCES_PAGERANK])
+        nx_graph = nx.from_numpy_array(sim_mat)
         scores = nx.pagerank(nx_graph)
-    except:
-        scores = nx.pagerank_numpy(nx_graph)
-    ranked_sentences = sorted(((scores[i],s) for i,s in enumerate(sentences_summary)), reverse=True)
-    for i in range(sn):
-        print('•', ranked_sentences[i][1], '\n')
+        sub_idx = pd.Series(scores).sort_values(ascending=False).index[:nb_sentences]
+
+        return np.array(self.answ_sents)[np.array(lidx)[sub_idx]].tolist()
