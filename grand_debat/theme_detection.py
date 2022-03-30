@@ -101,7 +101,7 @@ class GDebatTopicDetection:
             pyLDAvis.save_html(pyLDAVIS_tf, 'pyLDAVIS_tf.html')
             print("LDA visualization in pyLDAVIS_tf.html")
 
-    def get_topics_by_relevance(self, lambd, n_top=10):
+    def get_topics_by_relevance(self, lambd, n_top=5):
         """Get the topics from a sklearn countvectorizer and lda sorted by relevance
         see def of relevance in pyLDAvis article
         https://nlp.stanford.edu/events/illvi2014/papers/sievert-illvi2014.pdf
@@ -122,11 +122,11 @@ class GDebatTopicDetection:
         ret = []
         for n_topic in range(lda_components.shape[0]):
             ret.append(feature_names[np.argsort(
-                relevance[n_topic, :])[:-n_top:-1]].tolist())
+                relevance[n_topic, :])[:-n_top-1:-1]].tolist())
         return ret
 
 
-def compute_coherence_vs_ntopics(responses, data_prep, num_topics=[],
+def compute_coherence_vs_ntopics(responses, data_prep, num_topics,
                                  lambda_coh=0):
     """Try many numbers of topics and return lda coherence scores
     Args:
@@ -144,7 +144,7 @@ def compute_coherence_vs_ntopics(responses, data_prep, num_topics=[],
     # compute topics for different n_topics
     l_topics, v_coh = [], []
     for n_topics in num_topics:
-        print("compute lda for {} topics".format(n_topics))
+        print(f"compute lda for {n_topics} topics")
         topd = GDebatTopicDetection(data_prep, n_topics=n_topics)
         topd.compute_topic_detection(data_lems=responses)
         # retrieve topics
@@ -152,11 +152,11 @@ def compute_coherence_vs_ntopics(responses, data_prep, num_topics=[],
 
         l_topics.append(topics)
 
-        cm = CoherenceModel(topics=topics, texts=responses,
-                            dictionary=dictionary, coherence='c_v')
-        coherence = cm.get_coherence()  # get coherence value
+        cmodel = CoherenceModel(topics=topics, texts=responses,
+                                dictionary=dictionary, coherence='c_v')
+        coherence = cmodel.get_coherence()  # get coherence value
         v_coh.append(coherence)
-        print("Lda done, coherence {:.3f}".format(coherence))
+        print(f"Lda done, coherence {coherence:.3f}")
 
     # retrieve last idx before decrease
     vdec = np.nonzero(np.diff(v_coh) < 0)[0]
@@ -165,6 +165,6 @@ def compute_coherence_vs_ntopics(responses, data_prep, num_topics=[],
     else:
         best_n = num_topics[vdec[0]]
 
-    print("Best coherence achieved for n_topics = {}".format(best_n))
+    print(f"Best coherence achieved for n_topics = {best_n}")
 
     return v_coh, l_topics, best_n
