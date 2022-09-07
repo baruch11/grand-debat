@@ -1,0 +1,119 @@
+#+TITLE:Détection de thème sur une question environnement du grand débat
+#+PROPERTY: header-args:python :session /Users/charlesprat/Library/Jupyter/runtime/kernel-9b5e8362-dc76-444b-8726-3661a601541d.json
+#+PROPERTY: header-args:python+ :async yes
+#+PROPERTY: header-args:python+ :dir .
+#+PROPERTY: header-args:python+ :exports results
+
+Fork du projet TALAGRAND (https://github.com/Quantmetry/grand-debat) qui met à disposition des techniques d'IA pour appréhender le nombre important de réponses au grand débat.
+
+De même mon but est d'essayer des techniques d'extraction de thème (topic detection) sur des questions du grand débat. Pour cet essai j'ai pris : "de quelle manière votre vie quotidienne est-elle touchée par le changement climatique ?").
+J'ai tenté de le comparer ensuite à la synthèse "officielle" réalisée par OpinionWay : https://granddebat.fr/media/default/0001/01/b88758e8caa2733bec607a74b3b5371cc0a3b420.pdf
+
+Tel quel, le projet de départ TALAGRAND m'a donné des thèmes difficilement interprétables. Dans cette implémentation j'ai modifié la préparation de données grâce à la librairie spacy (lemmatisation, filtrage par POS), utilisé le même algo de LDA de scikit-learn que le projet initial, et déterminé le nombre de thèmes grâce au score de cohérence fourni par la librairie gensim.
+
+#+begin_src python
+  import warnings; warnings.simplefilter('ignore')
+  import pandas as pd
+  import numpy as np
+  import matplotlib.pyplot as plt
+  import logging
+  logging.getLogger().setLevel(logging.ERROR)
+  import sys
+  import json
+  import pprint
+  print(sys.executable, "toto")
+  %pwd
+#+end_src
+
+* Chargement des données
+
+- Récupérer la liste des thèmes en analysant le site du Grand Débat
+- Sélectionner un thème en modifiant la variable selected_theme
+- Télécharger ensuite le fichier json le plus récent associé à un thème depuis datagouv.fr
+
+#+begin_src python
+  from grand_debat.loading import load_answers, get_path, get_questions_from_json
+  themes = {"1 L'organisation de l'État et des services publics": 
+	    "http://opendata.auth-6f31f706db6f4a24b55f42a6a79c5086.storage.sbg.cloud.ovh.net/"+
+	    "2019-03-21/ORGANISATION_DE_LETAT_ET_DES_SERVICES_PUBLICS.json",
+	    "2 la-transition-ecologique": 
+	    "http://opendata.auth-6f31f706db6f4a24b55f42a6a79c5086.storage.sbg.cloud.ovh.net/2019-03-21/"+
+	    "LA_TRANSITION_ECOLOGIQUE.json",
+	    # 2 autres thèmes (fiscalité, démocratie) à voir ici:
+	    # https://granddebat.fr/pages/donnees-ouvertes
+	    }
+  # Choisir le numéro associé au thème que l'on souhaite étudier
+  selected_theme = 2
+
+
+  path = get_path(themes, selected_theme)
+  questions = get_questions_from_json(path)
+
+  pprint.pprint(questions)
+#+end_src
+
+#+begin_src python
+    selected_question = 'UXVlc3Rpb246MTQ3' # Si oui, de quelle manière votre vie quotidienne est-elle touchée ...
+    questions[selected_question]
+    'Si oui, de quelle manière votre vie quotidienne est-elle touchée par le changement climatique ?'
+    answers = load_answers(path, selected_question)
+
+    print("Nombre de réponses analysées :", len(answers))
+#+end_src
+
+
+* Détection de thèmes
+
+Détecter les thèmes principaux associés à la question sélectionnée en utilisant l'algorithme LDA (Latent Dirichlet Allocation)
+Le resultat de l'analyse se trouve dans le fichier pyLDAVIS\_tf.html
+
+** Preparation des données
+
+Tokenisation, lemmatisation, filtrage sur type (POS NOUN et ADJ) et stop words de spacy
+
+#+begin_src python
+  from tqdm import tqdm
+  import importlib
+  import grand_debat.theme_detection as td
+  importlib.reload(td)
+  gd_prep = td.GDebatDataPreparation(answers, stopsentence=questions[selected_question])
+#+end_src
+
+** Recherche du nombre optimal de thèmes pour l'entrée de la LDA
+
+On se base sur le "coherence score".
+https://svn.aksw.org/papers/2015/WSDM_Topic_Evaluation/public.pdf
+
+#+begin_src python
+
+  from numpy.random import default_rng
+  rng = default_rng(seed=11)
+
+  num_topics = [4,5,6,7,8,9,10,12,14,17,20]
+  answs_samples = rng.choice(gd_prep.answ_lems, size=20000, replace=False).tolist()
+  v_coh, l_topics, best_n = td.compute_coherence_vs_ntopics(
+      answs_samples, gd_prep, num_topics=num_topics, lambda_coh=0.3)
+  for topic in l_topics[5]:
+      print(topic)
+
+  import pandas as pd
+  import matplotlib.pyplot as plt
+  f,ax = plt.subplots()
+
+  pd.Series(v_coh, index=[len(topic) for topic in l_topics]).plot(ax=ax)
+  ax.grid()
+  #ax.set_ylim(0.2,0.7)
+
+#+end_src
+
+** LDA sur l'ensemble des donnée
+
+Plusieurs essais random me montrent que sur la question sélectionnée UXVlc3Rpb246MTQ3
+le premier maximum de la coherence se trouve très souvent entre 5 et 6. 
+
+#+begin_src python
+  n_topics = 8
+  topic_detector = td.GDebatTopicDetection(gd_prep, n_topics, verbose=1)
+  topic_detector.compute_topic_detection(data_bow=gd_prep.answ_bow, LDAVis=True)
+#+end_src
+

@@ -10,5 +10,5 @@ https://granddebat.fr/media/default/0001/01/b88758e8caa2733bec607a74b3b5371cc0a3
 
 ### installation
 
-> pip install -r requirements.txt
-> python -m spacy download fr_core_news_md
+`pip install -r requirements.txt` 
+`python -m spacy download fr_core_news_md`  
